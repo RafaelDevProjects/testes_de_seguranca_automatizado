@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Aplicação de demonstração para scan OWASP ZAP" />
+  <title>App Demo — OWASP ZAP Target</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --accent2: #3fb950;
+      --warn: #d29922;
+      --danger: #f85149;
+      --text: #e6edf3;
+      --muted: #8b949e;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header svg { width: 32px; height: 32px; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+
+    nav {
+      display: flex;
+      gap: 1.5rem;
+      padding: 0.75rem 2rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color .2s;
+    }
+    nav a:hover { color: var(--accent); }
+
+    main {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--accent);
+    }
+
+    label { display: block; margin-bottom: .25rem; font-size: .85rem; color: var(--muted); }
+    input, textarea, select {
+      width: 100%;
+      padding: .55rem .8rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: .9rem;
+      margin-bottom: 1rem;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    button {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      padding: .6rem 1.4rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: .9rem;
+      transition: opacity .2s;
+    }
+    button:hover { opacity: .85; }
+
+    .badge {
+      display: inline-block;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 600;
+    }
+    .badge-green { background: rgba(63,185,80,.15); color: var(--accent2); }
+    .badge-yellow { background: rgba(210,153,34,.15); color: var(--warn); }
+    .badge-red { background: rgba(248,81,73,.15); color: var(--danger); }
+
+    table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    th { text-align: left; padding: .5rem .75rem; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+    td { padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--muted);
+      font-size: .8rem;
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <!-- Shield icon -->
+    <svg viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    <h1>App Demo — Alvo para OWASP ZAP</h1>
+  </header>
+
+  <nav>
+    <a href="/">Início</a>
+    <a href="/login.html">Login</a>
+    <a href="/api/users">API Usuários</a>
+    <a href="/contact.html">Contato</a>
+  </nav>
+
+  <main>
+
+    <!-- Formulário de login -->
+    <div class="card">
+      <h2>🔐 Autenticação</h2>
+      <label for="username">Usuário</label>
+      <input type="text" id="username" name="username" placeholder="admin" autocomplete="username" />
+
+      <label for="password">Senha</label>
+      <input type="password" id="password" name="password" placeholder="••••••••" autocomplete="current-password" />
+
+      <button type="button" onclick="handleLogin()">Entrar</button>
+    </div>
+
+    <!-- Formulário de busca -->
+    <div class="card">
+      <h2>🔎 Pesquisa de Produtos</h2>
+      <label for="search">Termo de busca</label>
+      <input type="search" id="search" name="q" placeholder="ex: notebook, mouse..." />
+      <button type="button" onclick="handleSearch()">Pesquisar</button>
+      <div id="search-results" style="margin-top:1rem; color: var(--muted); font-size:.85rem;"></div>
+    </div>
+
+    <!-- Tabela de dados de exemplo -->
+    <div class="card">
+      <h2>📋 Usuários Cadastrados</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Nome</th>
+            <th>E-mail</th>
+            <th>Papel</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>001</td>
+            <td>Alice Souza</td>
+            <td>alice@exemplo.com</td>
+            <td>Admin</td>
+            <td><span class="badge badge-green">Ativo</span></td>
+          </tr>
+          <tr>
+            <td>002</td>
+            <td>Bruno Lima</td>
+            <td>bruno@exemplo.com</td>
+            <td>Editor</td>
+            <td><span class="badge badge-green">Ativo</span></td>
+          </tr>
+          <tr>
+            <td>003</td>
+            <td>Carla Neves</td>
+            <td>carla@exemplo.com</td>
+            <td>Viewer</td>
+            <td><span class="badge badge-yellow">Pendente</span></td>
+          </tr>
+          <tr>
+            <td>004</td>
+            <td>Diego Melo</td>
+            <td>diego@exemplo.com</td>
+            <td>Editor</td>
+            <td><span class="badge badge-red">Inativo</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Formulário de contato -->
+    <div class="card">
+      <h2>✉️ Formulário de Contato</h2>
+      <label for="name">Nome completo</label>
+      <input type="text" id="name" name="name" placeholder="Seu nome" />
+
+      <label for="email">E-mail</label>
+      <input type="email" id="email" name="email" placeholder="voce@exemplo.com" />
+
+      <label for="message">Mensagem</label>
+      <textarea id="message" name="message" rows="4" placeholder="Escreva sua mensagem..."></textarea>
+
+      <button type="button" onclick="handleContact()">Enviar Mensagem</button>
+    </div>
+
+  </main>
+
+  <footer>
+    Aplicação de demonstração para scans
+    <a href="https://owasp.org/www-project-zap/" target="_blank" rel="noopener">OWASP ZAP</a>
+    &mdash; Não use em produção.
+  </footer>
+
+  <script>
+    function handleLogin() {
+      const u = document.getElementById('username').value;
+      // Simulação — intencionalmente sem backend real
+      alert(u ? `Simulando login para: ${u}` : 'Preencha o usuário.');
+    }
+
+    function handleSearch() {
+      const q = document.getElementById('search').value.trim();
+      const el = document.getElementById('search-results');
+      if (!q) { el.textContent = 'Digite um termo para buscar.'; return; }
+      // Exibe o termo — ZAP irá testar XSS aqui
+      el.innerHTML = `Resultados para: <strong>${q}</strong> — nenhum produto encontrado.`;
+    }
+
+    function handleContact() {
+      const name = document.getElementById('name').value;
+      alert(name ? `Mensagem de ${name} enviada (simulação).` : 'Preencha o formulário.');
+    }
+  </script>
+</body>
+</html>

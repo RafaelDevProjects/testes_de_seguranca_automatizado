@@ -1,0 +1,221 @@
+name: 🛡️ OWASP ZAP Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Roda toda segunda-feira às 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Tipo de scan ZAP"
+        required: true
+        default: "baseline"
+        type: choice
+        options:
+          - baseline
+          - full
+          - api
+
+env:
+  APP_PORT: 8080
+  ZAP_REPORT_DIR: zap-reports
+  TARGET_URL: http://localhost:8080
+
+jobs:
+  # ─────────────────────────────────────────
+  # JOB 1 — Iniciar a aplicação + Rodar ZAP
+  # ─────────────────────────────────────────
+  security-scan:
+    name: 🔍 ZAP Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      # 1. Checkout do repositório
+      - name: 📥 Checkout do código
+        uses: actions/checkout@v4
+
+      # 2. Configurar Python para o servidor local
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. Instalar dependências da aplicação (se houver)
+      - name: 📦 Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      # 4. Criar diretório de relatórios
+      - name: 📁 Criar diretório de relatórios
+        run: mkdir -p ${{ env.ZAP_REPORT_DIR }}
+
+      # 5. Iniciar a aplicação web em background
+      - name: 🚀 Iniciar aplicação web local
+        run: |
+          cd app
+          python -m http.server ${{ env.APP_PORT }} &
+          echo "APP_PID=$!" >> $GITHUB_ENV
+          echo "✅ Servidor iniciado na porta ${{ env.APP_PORT }}"
+
+      # 6. Aguardar a aplicação ficar disponível
+      - name: ⏳ Aguardar aplicação ficar disponível
+        run: |
+          echo "Aguardando aplicação em ${{ env.TARGET_URL }}..."
+          timeout 30 bash -c \
+            'until curl -sf ${{ env.TARGET_URL }} > /dev/null; do
+              echo "  Tentando conectar..."; sleep 2;
+            done'
+          echo "✅ Aplicação disponível!"
+
+      # 7. ZAP Baseline Scan (rápido — verifica vulnerabilidades passivas)
+      - name: 🛡️ OWASP ZAP — Baseline Scan
+        if: ${{ github.event.inputs.scan_type == 'baseline' || github.event.inputs.scan_type == '' }}
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          rules_file_name: "zap/rules.tsv"
+          cmd_options: "-a -j -l WARN"
+          artifact_name: zap-baseline-report
+          fail_action: false
+          allow_issue_writing: false
+        continue-on-error: true
+
+      # 8. ZAP Full Scan (completo — inclui scan ativo)
+      - name: 🔬 OWASP ZAP — Full Scan
+        if: ${{ github.event.inputs.scan_type == 'full' }}
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          rules_file_name: "zap/rules.tsv"
+          cmd_options: "-a -j"
+          artifact_name: zap-full-report
+          fail_action: false
+          allow_issue_writing: false
+        continue-on-error: true
+
+      # 9. ZAP API Scan (para APIs REST/OpenAPI)
+      - name: 📡 OWASP ZAP — API Scan
+        if: ${{ github.event.inputs.scan_type == 'api' }}
+        uses: zaproxy/action-api-scan@v0.7.0
+        with:
+          target: ${{ env.TARGET_URL }}/openapi.json
+          format: openapi
+          rules_file_name: "zap/rules.tsv"
+          artifact_name: zap-api-report
+          fail_action: false
+          allow_issue_writing: false
+        continue-on-error: true
+
+      # 10. Gerar relatório HTML customizado via Docker ZAP
+      - name: 📊 Gerar Relatório HTML Detalhado
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+
+          docker run --rm \
+            --network="host" \
+            -v $(pwd)/${{ env.ZAP_REPORT_DIR }}:/zap/wrk/:rw \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t ${{ env.TARGET_URL }} \
+              -r zap-report.html \
+              -w zap-report.md \
+              -J zap-report.json \
+              -l WARN \
+              -a \
+              --auto \
+              2>&1 | tee ${{ env.ZAP_REPORT_DIR }}/zap-console.log || true
+
+          echo "✅ Relatório HTML gerado!"
+          ls -lah ${{ env.ZAP_REPORT_DIR }}/
+
+      # 11. Injetar estilo customizado no relatório HTML
+      - name: 🎨 Customizar relatório HTML
+        run: |
+          python3 scripts/enhance_report.py \
+            --input  ${{ env.ZAP_REPORT_DIR }}/zap-report.html \
+            --output ${{ env.ZAP_REPORT_DIR }}/zap-report-enhanced.html \
+            --title  "Relatório de Segurança — OWASP ZAP" \
+            --target ${{ env.TARGET_URL }} \
+            --date   "$(date '+%d/%m/%Y %H:%M UTC')" \
+            --commit "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}" || true
+
+      # 12. Publicar relatórios como artefatos do workflow
+      - name: 📤 Publicar relatórios como artefatos
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-security-reports-${{ github.run_number }}
+          path: |
+            ${{ env.ZAP_REPORT_DIR }}/zap-report.html
+            ${{ env.ZAP_REPORT_DIR }}/zap-report-enhanced.html
+            ${{ env.ZAP_REPORT_DIR }}/zap-report.json
+            ${{ env.ZAP_REPORT_DIR }}/zap-report.md
+            ${{ env.ZAP_REPORT_DIR }}/zap-console.log
+          retention-days: 30
+
+      # 13. Comentar resultados no Pull Request
+      - name: 💬 Comentar resultados no Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '${{ env.ZAP_REPORT_DIR }}/zap-report.md';
+            let body = '## 🛡️ OWASP ZAP — Resultado do Scan de Segurança\n\n';
+
+            if (fs.existsSync(reportPath)) {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              const lines = report.split('\n').slice(0, 50).join('\n');
+              body += '```\n' + lines + '\n```\n\n';
+            } else {
+              body += '> ⚠️ Relatório não encontrado. Verifique os artefatos do workflow.\n\n';
+            }
+
+            body += `**Commit:** \`${{ github.sha }}\`\n`;
+            body += `**Branch:** \`${{ github.ref_name }}\`\n`;
+            body += `**Target:** \`${{ env.TARGET_URL }}\`\n`;
+            body += `\n📎 [Ver relatório completo nos artefatos](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      # 14. Parar a aplicação
+      - name: 🛑 Parar aplicação web
+        if: always()
+        run: |
+          if [ -n "$APP_PID" ]; then
+            kill $APP_PID 2>/dev/null || true
+            echo "✅ Servidor encerrado (PID: $APP_PID)"
+          fi
+
+      # 15. Sumário do job no GitHub Actions
+      - name: 📋 Gerar sumário do workflow
+        if: always()
+        run: |
+          echo "## 🛡️ OWASP ZAP — Sumário do Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Target | \`${{ env.TARGET_URL }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔁 Tipo de Scan | \`${{ github.event.inputs.scan_type || 'baseline' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌿 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Data | \`$(date '+%d/%m/%Y %H:%M UTC')\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📎 Relatório HTML disponível nos **Artifacts** deste workflow." >> $GITHUB_STEP_SUMMARY
